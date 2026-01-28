@@ -37,13 +37,21 @@ jobs:
       - name: Clone Linux 6.12 Latest Source
         run: |
           # 定义版本和目录
-          LINUX_TAG="v6.12"
+          LINUX_TAG="v6.12.y"
           LINUX_DIR="linux-6.12-patched"
-          
-          # 克隆6.12最新源码（深度1，加快速度）
-          git clone --depth 1 --branch $LINUX_TAG https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git $LINUX_DIR
+    
+          # 修复1：先克隆仓库（不指定深度，避免标签解析失败），再检出标签
+          git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git $LINUX_DIR
           cd $LINUX_DIR
           
+          # 修复2：先获取标签对应的提交哈希，再检出（避免detached HEAD问题）
+          # 获取标签对应的提交ID
+          TAG_COMMIT=$(git rev-parse $LINUX_TAG^{commit})
+          echo "Tag $LINUX_TAG points to commit: $TAG_COMMIT"
+          
+          # 基于标签提交创建临时分支（解决detached HEAD）
+          git checkout -b linux-6.12-tag $TAG_COMMIT
+                
           # 补全git信息（方便后续提交）
           git fetch --unshallow || true
           git config --global user.name "houandy"
