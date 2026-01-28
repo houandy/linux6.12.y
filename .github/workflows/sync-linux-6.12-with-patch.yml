@@ -37,7 +37,7 @@ jobs:
       - name: Clone Linux 6.12 Latest Source
         run: |
           # 定义版本和目录
-          LINUX_TAG="v6.12.y"
+          LINUX_TAG="v6.12"
           LINUX_DIR="linux-6.12-patched"
     
           # 修复1：先克隆仓库（不指定深度，避免标签解析失败），再检出标签
