@@ -1,0 +1,131 @@
+# Linux 内核自动编译工作流 (ARM64 架构)
+name: Build Linux Kernel (ARM64) with Patch
+
+# 触发条件
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: 'Linux内核版本 (例如: 6.1.0)'
+        required: true
+        default: '6.12.0'
+      kernel_tag:
+        description: '内核源码标签 (例如: v6.1)'
+        required: true
+        default: 'v6.12'
+
+# 工作流权限配置
+permissions:
+  contents: read
+  actions: write
+  packages: write
+
+jobs:
+  build-kernel-arm64:
+    # 方案1：使用GitHub托管的ARM64运行器（推荐，无需模拟，速度快）
+    runs-on: ubuntu-22.04
+    # 启用ARM64支持（如果运行器是x86_64，自动用QEMU模拟）
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64]
+
+    name: Build ARM64 Linux Kernel
+
+    steps:
+      # 步骤1: 检出当前仓库
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 步骤2: 安装ARM64编译依赖（含交叉编译工具链）
+      - name: Install ARM64 Build Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            libncurses5-dev \
+            libssl-dev \
+            libelf-dev \
+            bison \
+            flex \
+            bc \
+            rsync \
+            kmod \
+            cpio \
+            wget \
+            git \
+            # ARM64交叉编译工具链（关键）
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            # 可选：QEMU（如果需要模拟运行）
+            qemu-system-arm
+
+      # 步骤3: 下载Linux内核源码
+      - name: Download Linux Kernel Source
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.kernel_tag }} https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux-src
+          cd linux-src
+          echo "Kernel version: $(make kernelversion)"
+
+      # 步骤4: 应用补丁
+      - name: Apply Patches
+        run: |
+          cd linux-src
+          if [ -d "../patches" ]; then
+            for patch in ../patches/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying patch: $patch"
+                git apply "$patch" || {
+                  echo "Error applying patch $patch"
+                  exit 1
+                }
+              fi
+            done
+            echo "All patches applied successfully"
+          else
+            echo "No patches directory found, skipping patching step"
+          fi
+
+      # 步骤5: 配置ARM64内核
+      - name: Configure ARM64 Kernel
+        run: |
+          cd linux-src
+          # 指定ARM64架构，生成默认配置
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          # 可选：自定义配置（例如启用调试信息）
+          # echo "CONFIG_LOCALVERSION=\"-arm64-custom\"" >> .config
+          # echo "CONFIG_DEBUG_INFO=y" >> .config
+
+      # 步骤6: 编译ARM64内核（核心调整）
+      - name: Build ARM64 Kernel
+        run: |
+          cd linux-src
+          CORES=$(nproc)
+          echo "Using $CORES cores for ARM64 compilation"
+          # 关键：指定ARCH=arm64和交叉编译工具前缀
+          make -j$CORES ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image modules
+          # 可选：编译DTB（设备树，ARM64常用）
+          # make -j$CORES ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- dtbs
+
+      # 步骤7: 打包ARM64编译产物
+      - name: Package ARM64 Build Artifacts
+        run: |
+          mkdir -p kernel-artifacts
+          cd linux-src
+          # ARM64内核镜像路径：arch/arm64/boot/Image
+          cp arch/arm64/boot/Image ../kernel-artifacts/linux-image-${{ github.event.inputs.kernel_version }}-arm64-custom
+          # 打包ARM64模块
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_install INSTALL_MOD_PATH=../kernel-artifacts/modules
+          cd ../kernel-artifacts
+          tar -czf modules-${{ github.event.inputs.kernel_version }}-arm64.tar.gz modules
+          rm -rf modules
+          # 可选：复制DTB文件（如果编译了dtbs）
+          # cp arch/arm64/boot/dts/*.dtb ../kernel-artifacts/
+
+      # 步骤8: 上传ARM64产物
+      - name: Upload ARM64 Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-kernel-${{ github.event.inputs.kernel_version }}-arm64
+          path: kernel-artifacts/
+          retention-days: 30
